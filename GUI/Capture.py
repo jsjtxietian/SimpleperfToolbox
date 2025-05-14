@@ -36,6 +36,7 @@ app_profiler_script = os.path.join(BASE_DIR, "deps", "ndk", "simpleperf", "app_p
 package_name = config["package_name"]
 
 def make_apk_debuggable(apk_path):
+    log_message(f"Making {apk_path} debuggable...", color="cyan")
     print(f"Making {apk_path} debuggable...")
 
     base, ext = os.path.splitext(apk_path)
@@ -65,25 +66,22 @@ def make_apk_debuggable(apk_path):
         if os.path.exists(debuggable_apk):
             os.remove(apk_path)
             os.remove(debuggable_apk)
-            status_label.config(text=f"Deleted intermediate APK file: {debuggable_apk}", fg="green")
-
-        print("All commands executed successfully!")
+            log_message(f"Deleted intermediate APK file: {debuggable_apk}", color="green")
+        log_message("All commands executed successfully!", color="green")
     except subprocess.CalledProcessError as e:
-        # print("An error occurred while running one of the commands:")
-        print(e)
-
+        log_message(f"Error running command: {e}", color="red")
     return True
 
 def start_capture():
     global capture_process
     global local_folder
     if local_folder is None:
-        print("Please fetch an APK first to create a working folder.")
+        log_message("Please fetch an APK first to create a working folder.", color="red")
         return False
     try:
         duration = duration_entry.get()
         if not duration.isdigit() or int(duration) <= 0:
-            print("Please enter a valid positive number for duration.")
+            log_message("Please enter a valid positive number for duration.", color="red")
             return False
         
         duration = int(duration)
@@ -96,11 +94,10 @@ def start_capture():
         ]
         # Start the process, capturing output (optional) and allowing termination
         capture_process = subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE, cwd=local_folder)
-        status_label.config(text=f"Capture started! Running for {duration} seconds...", fg="green")
+        log_message(f"Capture started! Running for {duration} seconds...", color="green")
         return True
     except Exception as e:
-        print(e)
-        status_label.config(text=f"Failed to start capture: {e}", fg="red")
+        log_message(f"Failed to start capture: {e}", color="red")
         return False
 
 def fetch_apk():
@@ -108,6 +105,7 @@ def fetch_apk():
     apk_path = apk_entry.get()
     if not apk_path or not os.path.exists(apk_path):
         messagebox.showerror("Error", "Please provide a valid APK path.")
+        log_message("Error: Please provide a valid APK path.", color="red")
         return
     
     # Define local folder
@@ -125,7 +123,7 @@ def fetch_apk():
     # Check if the APK comes from an "etc" package and pull additional files
     parent_folder = os.path.dirname(apk_path)  # e.g., before_shell_etc
     grandparent_folder = os.path.dirname(parent_folder)  # e.g., FFO_OB48_...
-    print(parent_folder)
+    log_message(parent_folder, color="cyan")
     
     parent_folder = os.path.dirname(apk_path)
     grandparent_folder = os.path.dirname(parent_folder)
@@ -145,7 +143,7 @@ def fetch_apk():
                 os.makedirs(symbol_folder, exist_ok=True)
                 with zipfile.ZipFile(src_zip, 'r') as zip_ref:
                     zip_ref.extractall(symbol_folder)
-                print(f"Unzipped {file} to {symbol_folder}")
+                log_message(f"Unzipped {file} to {symbol_folder}", color="cyan")
         
         # Handle nameTranslation.txt
         others_path = os.path.join(grandparent_folder, f"others_{package_type}")
@@ -154,12 +152,12 @@ def fetch_apk():
             src_path = os.path.join(others_path, name_translation_file)
             if os.path.exists(src_path):
                 shutil.copy(src_path, os.path.join(local_folder, name_translation_file))
-                print(f"Copied {name_translation_file} to {local_folder}")
+                log_message(f"Copied {name_translation_file} to {local_folder}", color="cyan")
     
     if make_apk_debuggable(local_apk_path):
-        status_label.config(text=f"APK fetched to {local_folder} and made debuggable!", fg="green")
+        log_message(f"APK fetched to {local_folder} and made debuggable!", color="green")
     else:
-        status_label.config(text="Failed to make APK debuggable.", fg="red")
+        log_message("Failed to make APK debuggable.", color="red")
 
 def start_button_click():
     start_capture()
@@ -167,25 +165,25 @@ def start_button_click():
 def post_process_data():
     global local_folder
     if local_folder is None or not os.path.exists(local_folder):
-        status_label.config(text="No working folder found. Fetch an APK first.", fg="red")
+        log_message("No working folder found. Fetch an APK first.", color="red")
         return False
     
     perf_data_path = os.path.join(local_folder, "perf.data")
     if not os.path.exists(perf_data_path):
-        status_label.config(text="No perf.data found in the working folder.", fg="red")
+        log_message("No perf.data found in the working folder.", color="red")
         return False
     
     try:
         # Step 0: Prepare binary_cache arm64 folder
         binary_cache_base = os.path.join(local_folder, "binary_cache", "data", "app")
         if not os.path.exists(binary_cache_base):
-            status_label.config(text="binary_cache\data\app not found.", fg="red")
+            log_message("binary_cache/data/app not found.", color="red")
             return False
         
         # Find the most recently modified intermediate folder
         intermediate_folders = [f for f in os.listdir(binary_cache_base) if os.path.isdir(os.path.join(binary_cache_base, f))]
         if not intermediate_folders:
-            status_label.config(text="No intermediate folder found in binary_cache\data\app.", fg="red")
+            log_message("No intermediate folder found in binary_cache/data/app.", color="red")
             return False
         
         latest_intermediate = max(intermediate_folders, key=lambda f: os.path.getmtime(os.path.join(binary_cache_base, f)))
@@ -194,7 +192,7 @@ def post_process_data():
         # Find the most recently modified folder under the intermediate folder
         app_folders = [f for f in os.listdir(intermediate_path) if package_name in f]
         if not app_folders:
-            status_label.config(text=f"No {package_name} folder found in binary_cache.", fg="red")
+            log_message(f"No {package_name} folder found in binary_cache.", color="red")
             return False
         
         latest_folder = max(app_folders, key=lambda f: os.path.getmtime(os.path.join(intermediate_path, f)))
@@ -207,11 +205,13 @@ def post_process_data():
         if os.path.exists(arm64_path):
             target_path = arm64_path
             symbol_path = os.path.join(local_folder, "Symbol", "arm64-v8a")
+            arch = "arm64-v8a"
         elif os.path.exists(armeabi_v7a_path):
             target_path = armeabi_v7a_path
             symbol_path = os.path.join(local_folder, "Symbol", "armeabi-v7a")
+            arch = "armeabi-v7a"
         else:
-            status_label.config(text="No arm64 or armeabi-v7a folder found in lib.", fg="red")
+            log_message("No arm64 or armeabi-v7a folder found in lib.", color="red")
             return False
         
         if os.path.exists(target_path):
@@ -220,10 +220,10 @@ def post_process_data():
                 lib_path = os.path.join(target_path, lib)
                 if os.path.exists(lib_path):
                     os.remove(lib_path)
-                    print(f"Deleted {lib_path}")
+                    log_message(f"Deleted {lib_path}", color="yellow")
             
             if not os.path.exists(symbol_path):
-                status_label.config(text=f"{symbol_path} not found.", fg="red")
+                log_message(f"{symbol_path} not found.", color="red")
                 return False
             
             # Copy libil2cpp.so.debug as libil2cpp.so
@@ -231,9 +231,9 @@ def post_process_data():
             dst_il2cpp = os.path.join(target_path, "libil2cpp.so")
             if os.path.exists(src_il2cpp):
                 shutil.copy(src_il2cpp, dst_il2cpp)
-                print(f"Copied {src_il2cpp} to {dst_il2cpp}")
+                log_message(f"Copied {src_il2cpp} to {dst_il2cpp}", color="yellow")
             else:
-                status_label.config(text=f"libil2cpp.so.debug not found in Symbol\{arch}.", fg="red")
+                log_message(f"libil2cpp.so.debug not found in Symbol/{arch}.", color="red")
                 return False
             
             # Copy libunity.sym.so as libunity.so
@@ -241,9 +241,9 @@ def post_process_data():
             dst_unity = os.path.join(target_path, "libunity.so")
             if os.path.exists(src_unity):
                 shutil.copy(src_unity, dst_unity)
-                print(f"Copied {src_unity} to {dst_unity}")
+                log_message(f"Copied {src_unity} to {dst_unity}", color="yellow")
             else:
-                status_label.config(text=f"libunity.sym.so not found in Symbol\{arch}.", fg="red")
+                log_message(f"libunity.sym.so not found in Symbol/{arch}.", color="red")
                 return False
 
         
@@ -257,6 +257,7 @@ def post_process_data():
         ]
         # Use shell=True to handle redirection
         subprocess.run(" ".join(gecko_cmd), shell=True, cwd=local_folder, check=True)
+        log_message("Generated gecko-profile.json", color="cyan")
         
         # Step 2: Translate symbols in gecko-profile.json
         file_path = os.path.join(local_folder, "gecko-profile.json")
@@ -264,7 +265,7 @@ def post_process_data():
         translated_file_path = os.path.join(local_folder, "gecko-profile-translated.json")
 
         if not os.path.exists(translation_file_path):
-            status_label.config(text="nameTranslation.txt not found for translation.", fg="red")
+            log_message("nameTranslation.txt not found for translation.", color="red")
             return False
 
         # Load the name translation table
@@ -301,10 +302,10 @@ def post_process_data():
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
             zipf.write(translated_file_path, os.path.basename(translated_file_path))
 
-        status_label.config(text="Data post-processing completed! Zipped to gecko-profile-translated.zip", fg="green")
+        log_message("Data post-processing completed! Zipped to gecko-profile-translated.zip", color="green")
         return True
     except Exception as e:
-        status_label.config(text=f"Failed to post-process data: {e}", fg="red")
+        log_message(f"Failed to post-process data: {e}", color="red")
         return False
 
 # Create the main window
@@ -323,14 +324,8 @@ apk_entry = tk.Entry(window, width=50, font=font_medium)
 apk_entry.pack(pady=5)
 tk.Button(window, text="Browse", font=font_medium, bg="#d3d3d3", command=lambda: apk_entry.insert(0, filedialog.askopenfilename())).pack(pady=5)
 
-
-# Status label with larger font and color feedback
-status_label = tk.Label(window, text="Ready", font=font_large, bg="#f0f0f0", fg="black")
-status_label.pack(pady=30)
-
 # Buttons with distinct colors and sizes
 tk.Button(window, text="Fetch & Make Debuggable", font=font_large, bg="#4CAF50", fg="white", width=25, height=2, command=fetch_apk).pack(pady=20)
-
 
 # Capture duration input section
 tk.Label(window, text="Capture Duration (seconds):", font=font_large, bg="#f0f0f0").pack(pady=10)
@@ -341,6 +336,27 @@ tk.Button(window, text="Start Capture", font=font_large, bg="#2196F3", fg="white
 # tk.Button(window, text="End Capture", font=font_large, bg="#F44336", fg="white", width=25, height=2, command=end_button_click).pack(pady=20)
 tk.Button(window, text="Post Process Data", font=font_large, bg="#FFA500", fg="white", 
           width=25, height=2, command=post_process_data).pack(pady=20)
+
+# Console log (scrollable) - moved to the bottom
+console_frame = tk.Frame(window)
+console_frame.pack(pady=10, fill=tk.BOTH, expand=True)
+console_scrollbar = tk.Scrollbar(console_frame)
+console_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+console_log = tk.Text(console_frame, height=12, font=("Consolas", 10), bg="#222", fg="#eee", yscrollcommand=console_scrollbar.set, state=tk.DISABLED)
+console_log.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+console_scrollbar.config(command=console_log.yview)
+
+def log_message(msg, color=None):
+    console_log.config(state=tk.NORMAL)
+    start_index = console_log.index(tk.END)
+    console_log.insert(tk.END, msg + "\n")
+    end_index = console_log.index(tk.END)
+    if color:
+        # Tag the just-inserted line (excluding the newline at the end)
+        console_log.tag_add(color, start_index, f"{end_index}-1c")
+        console_log.tag_config(color, foreground=color)
+    console_log.see(tk.END)
+    console_log.config(state=tk.DISABLED)
 
 # Start the GUI
 window.mainloop()
@@ -361,7 +377,7 @@ window.mainloop()
 #             result = subprocess.run([adb_path, "shell", "pidof", "simpleperf"], 
 #                                   capture_output=True, text=True)
 #             if result.stdout.strip():
-#                 status_label.config(text="Warning: simpleperf still running on device.", fg="orange")
+#                 log_message("Warning: simpleperf still running on device.", color="orange")
             
 #             # Step 4: Kill the app_profiler.py process and its children
 #             parent = psutil.Process(capture_process.pid)
@@ -378,19 +394,19 @@ window.mainloop()
 #                     except psutil.NoSuchProcess:
 #                         pass
             
-#             status_label.config(text="Capture ended! All processes terminated.", fg="green")
+#             log_message("Capture ended! All processes terminated.", color="green")
 #             capture_process = None
 #             return True
 #         except Exception as e:
-#             status_label.config(text=f"Failed to end capture: {e}", fg="red")
+#             log_message(f"Failed to end capture: {e}", color="red")
 #             return False
 #     else:
-#         status_label.config(text="No capture process running.", fg="red")
+#         log_message("No capture process running.", color="red")
 #         return False
 
 
 # def end_button_click():
 #     if end_capture():
-#         status_label.config(text="Capture ended and data processed!", fg="green")
+#         log_message("Capture ended and data processed!", color="green")
 #     else:
-#         status_label.config(text="Failed to end capture.", fg="red")
+#         log_message("Failed to end capture.", color="red")
