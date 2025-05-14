@@ -3,24 +3,19 @@ from tkinter import filedialog, messagebox
 import os
 import shutil
 import subprocess
-import argparse
-import signal
 from datetime import datetime
 import zipfile
 import json
 import concurrent.futures
 import sys
 
-capture_process = None
-local_folder = None
-
 BASE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-
-# adjust these paths if needed
 java_path = os.path.join(BASE_DIR, "deps", "jbr", "bin", "java.exe")
 manifest_editor_jar = os.path.join(BASE_DIR, "deps", "other", "ManifestEditor-2.0.jar")
 zipalign_path = os.path.join(BASE_DIR, "deps", "other", "zipalign.exe")
 apksigner_jar = os.path.join(BASE_DIR, "deps", "other", "apksigner.jar")
+gecko_script = os.path.join(BASE_DIR, "deps", "extras", "simpleperf", "scripts", "gecko_profile_generator.py")
+app_profiler_script = os.path.join(BASE_DIR, "deps", "ndk", "simpleperf", "app_profiler.py")
 
 # Load config from deps/other/config.json
 config_path = os.path.join(BASE_DIR, "deps", "other", "config.json")
@@ -29,11 +24,10 @@ with open(config_path, "r", encoding="utf-8") as f:
 
 keystore_path = os.path.join(BASE_DIR, "deps", "other", config["keystore_file"])
 keystore_pass = config["keystore_pass"]
-
-gecko_script = os.path.join(BASE_DIR, "deps", "extras", "simpleperf", "scripts", "gecko_profile_generator.py")
-app_profiler_script = os.path.join(BASE_DIR, "deps", "ndk", "simpleperf", "app_profiler.py")
-
 package_name = config["package_name"]
+
+capture_process = None
+local_folder = None
 
 def make_apk_debuggable(apk_path):
     log_message(f"Making {apk_path} debuggable...", color="cyan")
@@ -318,26 +312,32 @@ window.configure(bg="#f0f0f0")  # Light gray background for contrast
 font_large = ("Arial", 12, "bold")
 font_medium = ("Arial", 10)
 
-# APK path input section
-tk.Label(window, text="APK Path:", font=font_large, bg="#f0f0f0").pack(pady=10)
-apk_entry = tk.Entry(window, width=50, font=font_medium)
-apk_entry.pack(pady=5)
-tk.Button(window, text="Browse", font=font_medium, bg="#d3d3d3", command=lambda: apk_entry.insert(0, filedialog.askopenfilename())).pack(pady=5)
+# APK path input section (compact)
+apk_path_frame = tk.Frame(window, bg="#f0f0f0")
+apk_path_frame.pack(pady=10)
+tk.Label(apk_path_frame, text="APK Path:", font=font_large, bg="#f0f0f0").pack(side=tk.LEFT, padx=(0, 10))
+apk_entry = tk.Entry(apk_path_frame, width=40, font=font_medium)
+apk_entry.pack(side=tk.LEFT, padx=(0, 10))
+tk.Button(apk_path_frame, text="Browse", font=font_medium, bg="#d3d3d3", command=lambda: apk_entry.insert(0, filedialog.askopenfilename())).pack(side=tk.LEFT)
 
-# Buttons with distinct colors and sizes
-tk.Button(window, text="Fetch & Make Debuggable", font=font_large, bg="#4CAF50", fg="white", width=25, height=2, command=fetch_apk).pack(pady=20)
+# Fetch & Make Debuggable button
+fetch_btn = tk.Button(window, text="Fetch & Make Debuggable", font=font_large, bg="#4CAF50", fg="white", width=25, height=2, command=fetch_apk)
+fetch_btn.pack(pady=15)
 
-# Capture duration input section
-tk.Label(window, text="Capture Duration (seconds):", font=font_large, bg="#f0f0f0").pack(pady=10)
-duration_entry = tk.Entry(window, width=10, font=font_medium)
-duration_entry.insert(0, "600")  # Default value of 600 seconds
-duration_entry.pack(pady=5)
-tk.Button(window, text="Start Capture", font=font_large, bg="#2196F3", fg="white", width=25, height=2, command=start_button_click).pack(pady=20)
-# tk.Button(window, text="End Capture", font=font_large, bg="#F44336", fg="white", width=25, height=2, command=end_button_click).pack(pady=20)
-tk.Button(window, text="Post Process Data", font=font_large, bg="#FFA500", fg="white", 
-          width=25, height=2, command=post_process_data).pack(pady=20)
+# Capture duration and Start Capture (compact)
+duration_frame = tk.Frame(window, bg="#f0f0f0")
+duration_frame.pack(pady=10)
+tk.Label(duration_frame, text="Capture Duration (seconds):", font=font_large, bg="#f0f0f0").pack(side=tk.LEFT, padx=(0, 10))
+duration_entry = tk.Entry(duration_frame, width=8, font=font_medium)
+duration_entry.insert(0, "600")
+duration_entry.pack(side=tk.LEFT, padx=(0, 10))
+tk.Button(duration_frame, text="Start Capture", font=font_large, bg="#2196F3", fg="white", width=18, height=2, command=start_button_click).pack(side=tk.LEFT)
 
-# Console log (scrollable) - moved to the bottom
+# Post Process Data button
+post_btn = tk.Button(window, text="Post Process Data", font=font_large, bg="#FFA500", fg="white", width=25, height=2, command=post_process_data)
+post_btn.pack(pady=15)
+
+# Console log (scrollable) - stays at the bottom
 console_frame = tk.Frame(window)
 console_frame.pack(pady=10, fill=tk.BOTH, expand=True)
 console_scrollbar = tk.Scrollbar(console_frame)
@@ -352,61 +352,9 @@ def log_message(msg, color=None):
     console_log.insert(tk.END, msg + "\n")
     end_index = console_log.index(tk.END)
     if color:
-        # Tag the just-inserted line (excluding the newline at the end)
         console_log.tag_add(color, start_index, f"{end_index}-1c")
         console_log.tag_config(color, foreground=color)
     console_log.see(tk.END)
     console_log.config(state=tk.DISABLED)
 
-# Start the GUI
 window.mainloop()
-
-
-# def end_capture():
-#     global capture_process
-#     if capture_process is not None:
-#         try:
-#             # Step 1: Signal simpleperf on the device to stop (mimicking app_profiler.py)
-#             adb_path = "adb"  # Assumes adb is in PATH; adjust if needed
-#             subprocess.run([adb_path, "shell", "pkill", "-l", "2", "simpleperf"], check=False)
-            
-#             # Step 2: Wait briefly for simpleperf to stop and adb to exit
-#             time.sleep(1)
-            
-#             # Step 3: Check if simpleperf is still running on device
-#             result = subprocess.run([adb_path, "shell", "pidof", "simpleperf"], 
-#                                   capture_output=True, text=True)
-#             if result.stdout.strip():
-#                 log_message("Warning: simpleperf still running on device.", color="orange")
-            
-#             # Step 4: Kill the app_profiler.py process and its children
-#             parent = psutil.Process(capture_process.pid)
-#             for child in parent.children(recursive=True):
-#                 child.kill()  # Kill adb and any other children
-#             parent.kill()  # Kill app_profiler.py
-#             capture_process.wait(timeout=5)  # Wait for process to exit
-            
-#             # Step 5: Double-check and kill any lingering adb processes
-#             for proc in psutil.process_iter(['pid', 'name']):
-#                 if proc.info['name'] == 'adb.exe' and proc.is_running():
-#                     try:
-#                         proc.kill()
-#                     except psutil.NoSuchProcess:
-#                         pass
-            
-#             log_message("Capture ended! All processes terminated.", color="green")
-#             capture_process = None
-#             return True
-#         except Exception as e:
-#             log_message(f"Failed to end capture: {e}", color="red")
-#             return False
-#     else:
-#         log_message("No capture process running.", color="red")
-#         return False
-
-
-# def end_button_click():
-#     if end_capture():
-#         log_message("Capture ended and data processed!", color="green")
-#     else:
-#         log_message("Failed to end capture.", color="red")
