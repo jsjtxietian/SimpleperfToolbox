@@ -16,4 +16,6 @@ GUI/deps/
 * apksigner.jar
 * zipalign.exe
 
+build with `pyinstaller --add-data "deps;deps" Capture.py`
+
 ## Tools for viewing the data 

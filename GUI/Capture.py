@@ -10,6 +10,13 @@ import json
 import concurrent.futures
 import sys
 
+if getattr(sys, 'frozen', False):
+    # Running as a PyInstaller bundle
+    RUNTIME_DIR = os.path.dirname(sys.executable)
+else:
+    # Running as a script
+    RUNTIME_DIR = os.path.dirname(os.path.abspath(__file__))
+
 BASE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
 java_path = os.path.join(BASE_DIR, "deps", "jbr", "bin", "java.exe")
 manifest_editor_jar = os.path.join(BASE_DIR, "deps", "other", "ManifestEditor-2.0.jar")
@@ -17,6 +24,7 @@ zipalign_path = os.path.join(BASE_DIR, "deps", "other", "zipalign.exe")
 apksigner_jar = os.path.join(BASE_DIR, "deps", "other", "apksigner.jar")
 gecko_script = os.path.join(BASE_DIR, "deps", "extras", "simpleperf", "scripts", "gecko_profile_generator.py")
 app_profiler_script = os.path.join(BASE_DIR, "deps", "ndk", "simpleperf", "app_profiler.py")
+report_func = os.path.join(BASE_DIR, "deps", "ndk", "simpleperf", "report.py")
 
 # Load config from deps/other/config.json
 config_path = os.path.join(BASE_DIR, "deps", "other", "config.json")
@@ -105,7 +113,7 @@ def fetch_apk():
     
     # Define local folder
     timestamp = datetime.now().strftime("%Y%m%d_%H_%M_%S")  # e.g., 20250224_153045
-    results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Results")
+    results_dir = os.path.join(RUNTIME_DIR, "Results")
     os.makedirs(results_dir, exist_ok=True)  # Ensure Results folder exists
     local_folder = os.path.join(results_dir, f"apks_{timestamp}")
     os.makedirs(local_folder, exist_ok=True)  # Create folder if it doesn't exist
@@ -120,7 +128,7 @@ def fetch_apk():
     # Check if the APK comes from an "etc" package and pull additional files
     current_folder = os.path.dirname(apk_path)  # e.g., before_shell_etc
     parent_folder = os.path.dirname(current_folder)  # e.g., FFO_OB48_...
-    log_message(current_folder, color="cyan")
+    log_message(f"Use apk from {current_folder}", color="cyan")
     
     current_folder = os.path.dirname(apk_path)
     parent_folder = os.path.dirname(current_folder)
@@ -300,14 +308,24 @@ def post_process_data():
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
             zipf.write(translated_file_path, os.path.basename(translated_file_path))
 
-        log_message("Data post-processing completed! Zipped to gecko-profile-translated.zip", color="green")
+        report_func_cmd = [
+            "python",
+            report_func,
+            "-i", "perf.data",
+            "-o report.txt",
+            "-n --full-callgraph",
+            "--symfs", r".\binary_cache"
+        ]
+        subprocess.run(" ".join(report_func_cmd), shell=True, cwd=local_folder, check=True)
+
+        log_message("Data post-processing completed! Check gecko-profile-translated.zip and report.txt", color="green")
         return True
     except Exception as e:
         log_message(f"Failed to post-process data: {e}", color="red")
         return False
 
 def list_local_folders():
-    results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Results")
+    results_dir = os.path.join(RUNTIME_DIR, "Results")
     if not os.path.exists(results_dir):
         return []
     return sorted([
@@ -328,7 +346,7 @@ def on_folder_select(event=None):
     global local_folder
     selected = folder_var.get()
     if selected:
-        results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Results")
+        results_dir = os.path.join(RUNTIME_DIR, "Results")
         local_folder = os.path.join(results_dir, selected)
         log_message(f"Selected local folder: {local_folder}", color="cyan")
 

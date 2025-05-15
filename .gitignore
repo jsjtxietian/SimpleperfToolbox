@@ -1,2 +1,5 @@
 GUI/deps/ 
 GUI/Results/ 
+GUI/build/ 
+GUI/dist/ 
+GUI/*.spec
