@@ -118,32 +118,32 @@ def fetch_apk():
     shutil.copy(apk_path, local_apk_path)
 
     # Check if the APK comes from an "etc" package and pull additional files
-    parent_folder = os.path.dirname(apk_path)  # e.g., before_shell_etc
-    grandparent_folder = os.path.dirname(parent_folder)  # e.g., FFO_OB48_...
-    log_message(parent_folder, color="cyan")
+    current_folder = os.path.dirname(apk_path)  # e.g., before_shell_etc
+    parent_folder = os.path.dirname(current_folder)  # e.g., FFO_OB48_...
+    log_message(current_folder, color="cyan")
     
-    parent_folder = os.path.dirname(apk_path)
-    grandparent_folder = os.path.dirname(parent_folder)
+    current_folder = os.path.dirname(apk_path)
+    parent_folder = os.path.dirname(current_folder)
     symbol_folder = os.path.join(local_folder, "Symbol")
     
     package_type = None
-    if "etc" in grandparent_folder.lower():
+    if "etc" in apk_filename.lower():
         package_type = "etc"
-    elif "astc" in grandparent_folder.lower():
+    elif "astc" in apk_filename.lower():
         package_type = "astc"
     
     if package_type:
         # Handle symbols.zip
-        for file in os.listdir(grandparent_folder):
+        for file in os.listdir(parent_folder):
             if "symbols.zip" in file.lower() and package_type in file.lower():
-                src_zip = os.path.join(grandparent_folder, file)
+                src_zip = os.path.join(parent_folder, file)
                 os.makedirs(symbol_folder, exist_ok=True)
                 with zipfile.ZipFile(src_zip, 'r') as zip_ref:
                     zip_ref.extractall(symbol_folder)
                 log_message(f"Unzipped {file} to {symbol_folder}", color="cyan")
         
         # Handle nameTranslation.txt
-        others_path = os.path.join(grandparent_folder, f"others_{package_type}")
+        others_path = os.path.join(parent_folder, f"others_{package_type}")
         if os.path.exists(others_path):
             name_translation_file = "nameTranslation.txt"
             src_path = os.path.join(others_path, name_translation_file)
@@ -187,20 +187,18 @@ def post_process_data():
             return False
         
         latest_intermediate = max(intermediate_folders, key=lambda f: os.path.getmtime(os.path.join(binary_cache_base, f)))
-        intermediate_path = os.path.join(binary_cache_base, latest_intermediate)
+        latest_package_name_path = os.path.join(binary_cache_base, latest_intermediate)
         
         # Find the most recently modified folder under the intermediate folder
-        app_folders = [f for f in os.listdir(intermediate_path) if package_name in f]
-        if not app_folders:
-            log_message(f"No {package_name} folder found in binary_cache.", color="red")
+        if not package_name in latest_package_name_path:
+            log_message(f"No {package_name} folder found in {latest_package_name_path}.", color="red")
             return False
         
-        latest_folder = max(app_folders, key=lambda f: os.path.getmtime(os.path.join(intermediate_path, f)))
-        lib_path = os.path.join(intermediate_path, latest_folder, "lib")
+        lib_path = os.path.join(latest_package_name_path, "lib")
         
         # Determine architecture (arm64 or armeabi-v7a)
         arm64_path = os.path.join(lib_path, "arm64")
-        armeabi_v7a_path = os.path.join(lib_path, "armeabi-v7a")
+        armeabi_v7a_path = os.path.join(lib_path, "arm")
         
         if os.path.exists(arm64_path):
             target_path = arm64_path
@@ -211,7 +209,7 @@ def post_process_data():
             symbol_path = os.path.join(local_folder, "Symbol", "armeabi-v7a")
             arch = "armeabi-v7a"
         else:
-            log_message("No arm64 or armeabi-v7a folder found in lib.", color="red")
+            log_message(f"No arm64 or arm folder found in {lib_path}.", color="red")
             return False
         
         if os.path.exists(target_path):
@@ -334,6 +332,27 @@ def on_folder_select(event=None):
         local_folder = os.path.join(results_dir, selected)
         log_message(f"Selected local folder: {local_folder}", color="cyan")
 
+def install_apk_from_local():
+    global local_folder
+    if not local_folder or not os.path.exists(local_folder):
+        log_message("No local folder selected.", color="red")
+        return
+    # Find the APK file in the local_folder
+    apk_files = [f for f in os.listdir(local_folder) if f.endswith(".apk")]
+    if not apk_files:
+        log_message("No APK file found in the selected local folder.", color="red")
+        return
+    apk_path = os.path.join(local_folder, apk_files[0])
+    log_message(f"Installing APK: {apk_path}", color="cyan")
+    try:
+        result = subprocess.run(["adb", "install", "-r", apk_path], capture_output=True, text=True)
+        if result.returncode == 0:
+            log_message("APK installed successfully!", color="green")
+        else:
+            log_message(f"Failed to install APK: {result.stderr}", color="red")
+    except Exception as e:
+        log_message(f"Error running adb install: {e}", color="red")
+
 # Create the main window
 window = tk.Tk()
 window.title("Simpleperf Capture Tool")
@@ -368,12 +387,16 @@ folder_dropdown = ttk.Combobox(folder_frame, textvariable=folder_var, state="rea
 folder_dropdown.pack(side=tk.LEFT, padx=(0, 10))
 tk.Button(folder_frame, text="Use Local", font=font_medium, bg="#d3d3d3", command=on_folder_select).pack(side=tk.LEFT)
 
+# Add Install APK button after Use Local
+install_btn = tk.Button(folder_frame, text="Install APK", font=font_medium, bg="#8BC34A", fg="white", command=install_apk_from_local)
+install_btn.pack(side=tk.LEFT, padx=(10, 0))
+
 # Capture duration and Start Capture (compact)
 duration_frame = tk.Frame(window, bg="#f0f0f0")
 duration_frame.pack(pady=10)
 tk.Label(duration_frame, text="Capture Duration (seconds):", font=font_large, bg="#f0f0f0").pack(side=tk.LEFT, padx=(0, 10))
 duration_entry = tk.Entry(duration_frame, width=8, font=font_medium)
-duration_entry.insert(0, "600")
+duration_entry.insert(0, "10")
 duration_entry.pack(side=tk.LEFT, padx=(0, 10))
 tk.Button(duration_frame, text="Start Capture", font=font_large, bg="#2196F3", fg="white", width=18, height=2, command=start_button_click).pack(side=tk.LEFT)
 
