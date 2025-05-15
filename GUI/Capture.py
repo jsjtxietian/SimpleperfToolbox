@@ -265,10 +265,14 @@ def post_process_data():
         subprocess.run(" ".join(gecko_cmd), shell=True, cwd=local_folder, check=True)
         log_message("Generated gecko-profile.json", color="cyan")
         
+        timestamp = datetime.now().strftime("%Y%m%d_%H_%M_%S")
+        result_folder = os.path.join(local_folder, f"result_{timestamp}")
+        os.makedirs(result_folder, exist_ok=True)
+        
         # Step 2: Translate symbols in gecko-profile.json
-        file_path = os.path.join(local_folder, "gecko-profile.json")
+        gecko_file_path = os.path.join(local_folder, "gecko-profile.json")
         translation_file_path = os.path.join(local_folder, "nameTranslation.txt")
-        translated_file_path = os.path.join(local_folder, "gecko-profile-translated.json")
+        translated_gecko_file_path = os.path.join(local_folder, "gecko-profile-translated.json")
 
         if not os.path.exists(translation_file_path):
             log_message("nameTranslation.txt not found for translation.", color="red")
@@ -294,31 +298,31 @@ def post_process_data():
             updated_strings = [translate_symbol(entry) for entry in string_table]
             thread["stringTable"] = updated_strings
 
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(gecko_file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 executor.map(process_thread_with_translation, data.get("threads", []))
 
         # Save the updated JSON
-        with open(translated_file_path, "w", encoding="utf-8") as f:
+        with open(translated_gecko_file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
 
         # Step 3: Zip the translated JSON
-        zip_path = os.path.join(local_folder, "gecko-profile-translated.zip")
+        zip_path = os.path.join(result_folder, "gecko-profile-translated.zip")
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            zipf.write(translated_file_path, os.path.basename(translated_file_path))
+            zipf.write(translated_gecko_file_path, os.path.basename(translated_gecko_file_path))
 
         report_func_cmd = [
             "python",
             report_func,
             "-i", "perf.data",
-            "-o report.txt",
+            "-o", f"{os.path.join(result_folder, 'report.txt')}",
             "-n --full-callgraph",
             "--symfs", r".\binary_cache"
         ]
         subprocess.run(" ".join(report_func_cmd), shell=True, cwd=local_folder, check=True)
 
-        log_message("Data post-processing completed! Check gecko-profile-translated.zip and report.txt", color="green")
+        log_message(f"Data post-processing completed! Check {result_folder}", color="green")
         return True
     except Exception as e:
         log_message(f"Failed to post-process data: {e}", color="red")
