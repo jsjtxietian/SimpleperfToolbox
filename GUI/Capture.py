@@ -1,4 +1,5 @@
 import tkinter as tk
+import tkinter.ttk as ttk
 from tkinter import filedialog, messagebox
 import os
 import shutil
@@ -104,7 +105,9 @@ def fetch_apk():
     
     # Define local folder
     timestamp = datetime.now().strftime("%Y%m%d_%H_%M_%S")  # e.g., 20250224_153045
-    local_folder = f"apks_{timestamp}"
+    results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Results")
+    os.makedirs(results_dir, exist_ok=True)  # Ensure Results folder exists
+    local_folder = os.path.join(results_dir, f"apks_{timestamp}")
     os.makedirs(local_folder, exist_ok=True)  # Create folder if it doesn't exist
     
     # Get the original APK filename and construct local path
@@ -150,6 +153,9 @@ def fetch_apk():
     
     if make_apk_debuggable(local_apk_path):
         log_message(f"APK fetched to {local_folder} and made debuggable!", color="green")
+        update_folder_dropdown()
+        folder_var.set(f"apks_{timestamp}")
+        log_message(f"Current Working Folder: {local_folder}", color="cyan")
     else:
         log_message("Failed to make APK debuggable.", color="red")
 
@@ -302,6 +308,32 @@ def post_process_data():
         log_message(f"Failed to post-process data: {e}", color="red")
         return False
 
+def list_local_folders():
+    results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Results")
+    if not os.path.exists(results_dir):
+        return []
+    return sorted([
+        f for f in os.listdir(results_dir)
+        if os.path.isdir(os.path.join(results_dir, f)) and f.startswith("apks_")
+    ], reverse=True)
+
+def update_folder_dropdown():
+    folders = list_local_folders()
+    folder_var.set(folders[0] if folders else "")
+    folder_dropdown['values'] = folders
+    if folders:
+        folder_dropdown.current(0)
+    else:
+        folder_dropdown.set("")
+
+def on_folder_select(event=None):
+    global local_folder
+    selected = folder_var.get()
+    if selected:
+        results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Results")
+        local_folder = os.path.join(results_dir, selected)
+        log_message(f"Selected local folder: {local_folder}", color="cyan")
+
 # Create the main window
 window = tk.Tk()
 window.title("Simpleperf Capture Tool")
@@ -311,6 +343,9 @@ window.configure(bg="#f0f0f0")  # Light gray background for contrast
 # Custom font for better readability
 font_large = ("Arial", 12, "bold")
 font_medium = ("Arial", 10)
+
+step1_label = tk.Label(window, text="Step 1: Either fetch a new APK or reuse a previous local folder.", font=("Arial", 12, "bold"), bg="#f0f0f0", fg="#AA5500")
+step1_label.pack(pady=(20, 5))
 
 # APK path input section (compact)
 apk_path_frame = tk.Frame(window, bg="#f0f0f0")
@@ -322,7 +357,16 @@ tk.Button(apk_path_frame, text="Browse", font=font_medium, bg="#d3d3d3", command
 
 # Fetch & Make Debuggable button
 fetch_btn = tk.Button(window, text="Fetch & Make Debuggable", font=font_large, bg="#4CAF50", fg="white", width=25, height=2, command=fetch_apk)
-fetch_btn.pack(pady=15)
+fetch_btn.pack(pady=10)
+
+# Folder selection frame (reuse UI)
+folder_frame = tk.Frame(window, bg="#f0f0f0")
+folder_frame.pack(pady=10)
+tk.Label(folder_frame, text="Use Local", font=font_large, bg="#f0f0f0").pack(side=tk.LEFT, padx=(0, 10))
+folder_var = tk.StringVar()
+folder_dropdown = ttk.Combobox(folder_frame, textvariable=folder_var, state="readonly", width=30)
+folder_dropdown.pack(side=tk.LEFT, padx=(0, 10))
+tk.Button(folder_frame, text="Use Local", font=font_medium, bg="#d3d3d3", command=on_folder_select).pack(side=tk.LEFT)
 
 # Capture duration and Start Capture (compact)
 duration_frame = tk.Frame(window, bg="#f0f0f0")
@@ -357,4 +401,6 @@ def log_message(msg, color=None):
     console_log.see(tk.END)
     console_log.config(state=tk.DISABLED)
 
+# At the end of the UI setup, after all widgets are created, call update_folder_dropdown
+update_folder_dropdown()
 window.mainloop()
