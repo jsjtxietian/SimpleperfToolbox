@@ -9,6 +9,8 @@ import zipfile
 import json
 import concurrent.futures
 import sys
+import threading
+import time
 
 if getattr(sys, 'frozen', False):
     # Running as a PyInstaller bundle
@@ -103,6 +105,15 @@ def start_capture():
         # Start the process, capturing output (optional) and allowing termination
         capture_process = subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE, cwd=local_folder)
         log_message(f"Capture started! Running for {duration} seconds at {frequency} Hz...", color="green")
+        
+        # Start countdown in a separate thread
+        def countdown_progress():
+            for i in range(duration, 0, -1):
+                percent = 100 - int((i / duration) * 100)
+                log_message(f"Simpleperf Profiling Progress {percent}%")
+                time.sleep(1)
+            log_message("Simpleperf Profiling Capture Complete")
+        threading.Thread(target=countdown_progress, daemon=True).start()
         return True
     except Exception as e:
         log_message(f"Failed to start capture: {e}", color="red")
@@ -193,20 +204,14 @@ def post_process_data():
             log_message("binary_cache/data/app not found.", color="red")
             return False
         
-        # Find the most recently modified intermediate folder
-        intermediate_folders = [f for f in os.listdir(binary_cache_base) if os.path.isdir(os.path.join(binary_cache_base, f))]
+        # Only include folders that contain the package_name
+        intermediate_folders = [f for f in os.listdir(binary_cache_base) if os.path.isdir(os.path.join(binary_cache_base, f)) and package_name in f]
         if not intermediate_folders:
-            log_message("No intermediate folder found in binary_cache/data/app.", color="red")
+            log_message(f"No {package_name} folder found in binary_cache/data/app.", color="red")
             return False
         
         latest_intermediate = max(intermediate_folders, key=lambda f: os.path.getmtime(os.path.join(binary_cache_base, f)))
         latest_package_name_path = os.path.join(binary_cache_base, latest_intermediate)
-        
-        # Find the most recently modified folder under the intermediate folder
-        if not package_name in latest_package_name_path:
-            log_message(f"No {package_name} folder found in {latest_package_name_path}.", color="red")
-            return False
-        
         lib_path = os.path.join(latest_package_name_path, "lib")
         
         # Determine architecture (arm64 or armeabi-v7a)
