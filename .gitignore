@@ -1,5 +1,5 @@
-GUI/deps/ 
-GUI/Results/ 
-GUI/build/ 
-GUI/dist/ 
-GUI/*.spec
+CaptureGUI/deps/ 
+CaptureGUI/Results/ 
+CaptureGUI/build/ 
+CaptureGUI/dist/ 
+CaptureGUI/*.spec

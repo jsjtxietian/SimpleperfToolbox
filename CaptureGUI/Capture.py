@@ -94,6 +94,8 @@ def start_capture():
             app_profiler_script,
             "-p", package_name,
             "-r", f"-e cpu-clock -f 1000 --duration {duration} -g"
+            # More control here
+            # "-r", f"-e cpu-clock -f 1000 --duration {duration} --trace-offcpu -g"
         ]
         # Start the process, capturing output (optional) and allowing termination
         capture_process = subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE, cwd=local_folder)
