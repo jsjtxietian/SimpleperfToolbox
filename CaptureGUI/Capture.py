@@ -38,6 +38,9 @@ package_name = config["package_name"]
 capture_process = None
 local_folder = None
 
+# Add frequency selection variable and default
+frequency_var = None
+
 def make_apk_debuggable(apk_path):
     log_message(f"Making {apk_path} debuggable...", color="cyan")
     print(f"Making {apk_path} debuggable...")
@@ -88,18 +91,18 @@ def start_capture():
             return False
         
         duration = int(duration)
+        frequency = frequency_var.get()
         # Command to start simpleperf
+        # TODO, can configure this "-e cpu-clock"
         cmd = [
             "python",
             app_profiler_script,
             "-p", package_name,
-            "-r", f"-e cpu-clock -f 1000 --duration {duration} -g"
-            # More control here
-            # "-r", f"-e cpu-clock -f 1000 --duration {duration} --trace-offcpu -g"
+            "-r", f"-e cpu-clock -f {frequency} --duration {duration} -g"
         ]
         # Start the process, capturing output (optional) and allowing termination
         capture_process = subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE, cwd=local_folder)
-        log_message(f"Capture started! Running for {duration} seconds...", color="green")
+        log_message(f"Capture started! Running for {duration} seconds at {frequency} Hz...", color="green")
         return True
     except Exception as e:
         log_message(f"Failed to start capture: {e}", color="red")
@@ -274,7 +277,7 @@ def post_process_data():
         # Step 2: Translate symbols in gecko-profile.json
         gecko_file_path = os.path.join(local_folder, "gecko-profile.json")
         translation_file_path = os.path.join(local_folder, "nameTranslation.txt")
-        translated_gecko_file_path = os.path.join(local_folder, "gecko-profile-translated.json")
+        translated_gecko_file_path = os.path.join(result_folder, "gecko-profile-translated.json")
 
         if not os.path.exists(translation_file_path):
             log_message("nameTranslation.txt not found for translation.", color="red")
@@ -305,14 +308,10 @@ def post_process_data():
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 executor.map(process_thread_with_translation, data.get("threads", []))
 
-        # Save the updated JSON
+        # Save the updated JSON and delete origin
         with open(translated_gecko_file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
-
-        # Step 3: Zip the translated JSON
-        zip_path = os.path.join(result_folder, "gecko-profile-translated.zip")
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            zipf.write(translated_gecko_file_path, os.path.basename(translated_gecko_file_path))
+        os.remove(gecko_file_path)
 
         report_func_cmd = [
             "python",
@@ -379,8 +378,9 @@ def install_apk_from_local():
 
 # Create the main window
 window = tk.Tk()
+frequency_var = tk.StringVar(value="1000")
 window.title("Simpleperf Capture Tool")
-window.geometry("600x600")  # Larger window size
+window.geometry("800x600")  # Larger window size
 window.configure(bg="#f0f0f0")  # Light gray background for contrast
 
 # Custom font for better readability
@@ -396,11 +396,10 @@ apk_path_frame.pack(pady=10)
 tk.Label(apk_path_frame, text="APK Path:", font=font_large, bg="#f0f0f0").pack(side=tk.LEFT, padx=(0, 10))
 apk_entry = tk.Entry(apk_path_frame, width=40, font=font_medium)
 apk_entry.pack(side=tk.LEFT, padx=(0, 10))
-tk.Button(apk_path_frame, text="Browse", font=font_medium, bg="#d3d3d3", command=lambda: apk_entry.insert(0, filedialog.askopenfilename())).pack(side=tk.LEFT)
-
-# Fetch & Make Debuggable button
-fetch_btn = tk.Button(window, text="Fetch & Make Debuggable", font=font_large, bg="#4CAF50", fg="white", width=25, height=2, command=fetch_apk)
-fetch_btn.pack(pady=10)
+browse_btn = tk.Button(apk_path_frame, text="Browse", font=font_medium, bg="#d3d3d3", command=lambda: apk_entry.insert(0, filedialog.askopenfilename()))
+browse_btn.pack(side=tk.LEFT)
+fetch_btn = tk.Button(apk_path_frame, text="Fetch & Make Debuggable", font=font_large, bg="#4CAF50", fg="white", width=25, height=2, command=fetch_apk)
+fetch_btn.pack(side=tk.LEFT, padx=(10, 0))
 
 # Folder selection frame (reuse UI)
 folder_frame = tk.Frame(window, bg="#f0f0f0")
@@ -422,7 +421,18 @@ tk.Label(duration_frame, text="Capture Duration (seconds):", font=font_large, bg
 duration_entry = tk.Entry(duration_frame, width=8, font=font_medium)
 duration_entry.insert(0, "10")
 duration_entry.pack(side=tk.LEFT, padx=(0, 10))
-tk.Button(duration_frame, text="Start Capture", font=font_large, bg="#2196F3", fg="white", width=18, height=2, command=start_button_click).pack(side=tk.LEFT)
+
+# Add frequency dropdown
+freq_label = tk.Label(duration_frame, text="Frequency:", font=font_large, bg="#f0f0f0")
+freq_label.pack(side=tk.LEFT, padx=(10, 5))
+freq_dropdown = ttk.Combobox(duration_frame, textvariable=frequency_var, state="readonly", width=6, font=font_medium)
+freq_dropdown['values'] = ("1000", "2000", "3000")
+freq_dropdown.current(0)
+freq_dropdown.pack(side=tk.LEFT, padx=(0, 10))
+
+# Start Capture button
+start_btn = tk.Button(duration_frame, text="Start Capture", font=font_large, bg="#2196F3", fg="white", width=18, height=2, command=start_button_click)
+start_btn.pack(side=tk.LEFT)
 
 # Post Process Data button
 post_btn = tk.Button(window, text="Post Process Data", font=font_large, bg="#FFA500", fg="white", width=25, height=2, command=post_process_data)
