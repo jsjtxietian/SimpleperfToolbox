@@ -123,8 +123,8 @@ def fetch_apk():
     global local_folder
     apk_path = apk_entry.get()
     if not apk_path or not os.path.exists(apk_path):
-        messagebox.showerror("Error", "Please provide a valid APK path.")
-        log_message("Error: Please provide a valid APK path.", color="red")
+        messagebox.showerror(f"Error", "Please provide a valid APK path: {apk_path}")
+        log_message(f"Error: Please provide a valid APK path: {apk_path}", color="red")
         return
     
     # Define local folder
@@ -401,7 +401,14 @@ apk_path_frame.pack(pady=10)
 tk.Label(apk_path_frame, text="APK Path:", font=font_large, bg="#f0f0f0").pack(side=tk.LEFT, padx=(0, 10))
 apk_entry = tk.Entry(apk_path_frame, width=40, font=font_medium)
 apk_entry.pack(side=tk.LEFT, padx=(0, 10))
-browse_btn = tk.Button(apk_path_frame, text="Browse", font=font_medium, bg="#d3d3d3", command=lambda: apk_entry.insert(0, filedialog.askopenfilename()))
+
+def clear_and_browse_apk():
+    apk_entry.delete(0, tk.END)
+    path = filedialog.askopenfilename()
+    if path:
+        apk_entry.insert(0, path)
+
+browse_btn = tk.Button(apk_path_frame, text="Browse", font=font_medium, bg="#d3d3d3", command=clear_and_browse_apk)
 browse_btn.pack(side=tk.LEFT)
 fetch_btn = tk.Button(apk_path_frame, text="Fetch & Make Debuggable", font=font_large, bg="#4CAF50", fg="white", width=25, height=2, command=fetch_apk)
 fetch_btn.pack(side=tk.LEFT, padx=(10, 0))
