@@ -42,6 +42,7 @@ local_folder = None
 
 # Add frequency selection variable and default
 frequency_var = None
+trace_offcpu_var = None
 
 def make_apk_debuggable(apk_path):
     log_message(f"Making {apk_path} debuggable...", color="cyan")
@@ -94,13 +95,15 @@ def start_capture():
         
         duration = int(duration)
         frequency = frequency_var.get()
+        trace_offcpu = trace_offcpu_var.get()
         # Command to start simpleperf
-        # TODO, can configure this "-e cpu-clock"
+        trace_flag = "--trace-offcpu" if trace_offcpu else ""
+        record_args = f"-e cpu-clock {trace_flag} -f {frequency} --duration {duration} -g".strip()
         cmd = [
             "python",
             app_profiler_script,
             "-p", package_name,
-            "-r", f"-e cpu-clock -f {frequency} --duration {duration} -g"
+            "-r", record_args
         ]
         # Start the process, capturing output (optional) and allowing termination
         capture_process = subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE, cwd=local_folder)
@@ -329,6 +332,11 @@ def post_process_data():
         subprocess.run(" ".join(report_func_cmd), shell=True, cwd=local_folder, check=True)
 
         log_message(f"Data post-processing completed! Check {result_folder}", color="green")
+        # Open the result folder in Windows Explorer
+        try:
+            os.startfile(result_folder)
+        except Exception as e:
+            log_message(f"Failed to open result folder: {e}", color="red")
         return True
     except Exception as e:
         log_message(f"Failed to post-process data: {e}", color="red")
@@ -380,10 +388,10 @@ def install_apk_from_local():
             log_message(f"Failed to install APK: {result.stderr}", color="red")
     except Exception as e:
         log_message(f"Error running adb install: {e}", color="red")
-
 # Create the main window
 window = tk.Tk()
 frequency_var = tk.StringVar(value="1000")
+trace_offcpu_var = tk.BooleanVar(value=False)
 window.title("Simpleperf Capture Tool")
 window.geometry("800x600")  # Larger window size
 window.configure(bg="#f0f0f0")  # Light gray background for contrast
@@ -429,7 +437,7 @@ install_btn.pack(side=tk.LEFT, padx=(10, 0))
 # Capture duration and Start Capture (compact)
 duration_frame = tk.Frame(window, bg="#f0f0f0")
 duration_frame.pack(pady=10)
-tk.Label(duration_frame, text="Capture Duration (seconds):", font=font_large, bg="#f0f0f0").pack(side=tk.LEFT, padx=(0, 10))
+tk.Label(duration_frame, text="Capture Duration (s):", font=font_large, bg="#f0f0f0").pack(side=tk.LEFT, padx=(0, 10))
 duration_entry = tk.Entry(duration_frame, width=8, font=font_medium)
 duration_entry.insert(0, "10")
 duration_entry.pack(side=tk.LEFT, padx=(0, 10))
@@ -441,6 +449,10 @@ freq_dropdown = ttk.Combobox(duration_frame, textvariable=frequency_var, state="
 freq_dropdown['values'] = ("1000", "2000", "3000")
 freq_dropdown.current(0)
 freq_dropdown.pack(side=tk.LEFT, padx=(0, 10))
+
+# Add --trace-offcpu toggle next to frequency
+trace_offcpu_check = tk.Checkbutton(duration_frame, text="offcpu", variable=trace_offcpu_var, font=font_large, bg="#f0f0f0")
+trace_offcpu_check.pack(side=tk.LEFT, padx=(0, 10))
 
 # Start Capture button
 start_btn = tk.Button(duration_frame, text="Start Capture", font=font_large, bg="#2196F3", fg="white", width=18, height=2, command=start_button_click)
@@ -473,3 +485,4 @@ def log_message(msg, color=None):
 # At the end of the UI setup, after all widgets are created, call update_folder_dropdown
 update_folder_dropdown()
 window.mainloop()
+
