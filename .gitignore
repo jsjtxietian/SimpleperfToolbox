@@ -3,3 +3,6 @@ CaptureGUI/Results/
 CaptureGUI/build/ 
 CaptureGUI/dist/ 
 CaptureGUI/*.spec
+
+# Ignore the package config file
+CaptureGUI/PackageConfig.json

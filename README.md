@@ -2,6 +2,8 @@
 
 ## GUI Tools for capturing data using simpleperf
 
+Better not use it as a black box, use it as ref for your own tool. Lot's of code are vibe coded to suit my own need.
+
 GUI/deps/  
 ├── extras/   for things like gecko_profile_generator.py  
 ├── jbr/      for running java tools  
@@ -16,6 +18,6 @@ GUI/deps/
 * apksigner.jar
 * zipalign.exe
 
-build with `pyinstaller --add-data "deps;deps" Capture.py`
+build and deploy with deploy.bat
 
 ## Tools for viewing the data 
