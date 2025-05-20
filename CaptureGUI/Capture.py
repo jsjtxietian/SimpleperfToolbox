@@ -42,43 +42,43 @@ local_folder = None
 
 # Add frequency selection variable and default
 frequency_var = None
-trace_offcpu_var = None
+# trace_offcpu_var = None
 
 def make_apk_debuggable(apk_path):
-    log_message(f"Making {apk_path} debuggable...", color="cyan")
-    print(f"Making {apk_path} debuggable...")
+    # log_message(f"Making {apk_path} debuggable...", color="cyan")
+    # print(f"Making {apk_path} debuggable...")
 
-    base, ext = os.path.splitext(apk_path)
-    debuggable_apk = f"{base}_debuggable{ext}"
-    aligned_debuggable_apk = f"{base}_aligned_debuggable{ext}"
+    # base, ext = os.path.splitext(apk_path)
+    # debuggable_apk = f"{base}_debuggable{ext}"
+    # aligned_debuggable_apk = f"{base}_aligned_debuggable{ext}"
 
-    # Construct the commands
-    command1 = (
-        f'{java_path} -jar {manifest_editor_jar} "{apk_path}" '
-        f'-o "{debuggable_apk}" -d 1'
-    )
-    command2 = (
-        f'{zipalign_path} 4 "{debuggable_apk}" "{aligned_debuggable_apk}"'
-    )
-    command3 = (
-        f'{java_path} -jar {apksigner_jar} sign '
-        f'--v1-signing-enabled --v2-signing-enabled '
-        f'--ks {keystore_path} --ks-pass pass:{keystore_pass} '
-        f'"{aligned_debuggable_apk}"'
-    )
+    # # Construct the commands
+    # command1 = (
+    #     f'{java_path} -jar {manifest_editor_jar} "{apk_path}" '
+    #     f'-o "{debuggable_apk}" -d 1'
+    # )
+    # command2 = (
+    #     f'{zipalign_path} 4 "{debuggable_apk}" "{aligned_debuggable_apk}"'
+    # )
+    # command3 = (
+    #     f'{java_path} -jar {apksigner_jar} sign '
+    #     f'--v1-signing-enabled --v2-signing-enabled '
+    #     f'--ks {keystore_path} --ks-pass pass:{keystore_pass} '
+    #     f'"{aligned_debuggable_apk}"'
+    # )
 
-    try:
-        subprocess.run(command1, shell=True, check=True)
-        subprocess.run(command2, shell=True, check=True)
-        subprocess.run(command3, shell=True, check=True)
+    # try:
+    #     subprocess.run(command1, shell=True, check=True)
+    #     subprocess.run(command2, shell=True, check=True)
+    #     subprocess.run(command3, shell=True, check=True)
 
-        if os.path.exists(debuggable_apk):
-            os.remove(apk_path)
-            os.remove(debuggable_apk)
-            log_message(f"Deleted intermediate APK file: {debuggable_apk}", color="green")
-        log_message("All commands executed successfully!", color="green")
-    except subprocess.CalledProcessError as e:
-        log_message(f"Error running command: {e}", color="red")
+    #     if os.path.exists(debuggable_apk):
+    #         os.remove(apk_path)
+    #         os.remove(debuggable_apk)
+    #         log_message(f"Deleted intermediate APK file: {debuggable_apk}", color="green")
+    #     log_message("All commands executed successfully!", color="green")
+    # except subprocess.CalledProcessError as e:
+    #     log_message(f"Error running command: {e}", color="red")
     return True
 
 def start_capture():
@@ -95,10 +95,11 @@ def start_capture():
         
         duration = int(duration)
         frequency = frequency_var.get()
-        trace_offcpu = trace_offcpu_var.get()
+
         # Command to start simpleperf
-        trace_flag = "--trace-offcpu" if trace_offcpu else ""
-        record_args = f"-e cpu-clock {trace_flag} -f {frequency} --duration {duration} -g".strip()
+        # trace_offcpu = trace_offcpu_var.get()
+        # trace_flag = "--trace-offcpu" if trace_offcpu else ""
+        record_args = f"-e cpu-clock -f {frequency} --duration {duration} -g".strip()
         cmd = [
             "python",
             app_profiler_script,
@@ -391,7 +392,7 @@ def install_apk_from_local():
 # Create the main window
 window = tk.Tk()
 frequency_var = tk.StringVar(value="1000")
-trace_offcpu_var = tk.BooleanVar(value=False)
+# trace_offcpu_var = tk.BooleanVar(value=False)
 window.title("Simpleperf Capture Tool")
 window.geometry("800x600")  # Larger window size
 window.configure(bg="#f0f0f0")  # Light gray background for contrast
@@ -418,7 +419,7 @@ def clear_and_browse_apk():
 
 browse_btn = tk.Button(apk_path_frame, text="Browse", font=font_medium, bg="#d3d3d3", command=clear_and_browse_apk)
 browse_btn.pack(side=tk.LEFT)
-fetch_btn = tk.Button(apk_path_frame, text="Fetch & Make Debuggable", font=font_large, bg="#4CAF50", fg="white", width=25, height=2, command=fetch_apk)
+fetch_btn = tk.Button(apk_path_frame, text="Fetch A Debuggable Apk", font=font_large, bg="#4CAF50", fg="white", width=25, height=2, command=fetch_apk)
 fetch_btn.pack(side=tk.LEFT, padx=(10, 0))
 
 # Folder selection frame (reuse UI)
@@ -451,8 +452,8 @@ freq_dropdown.current(0)
 freq_dropdown.pack(side=tk.LEFT, padx=(0, 10))
 
 # Add --trace-offcpu toggle next to frequency
-trace_offcpu_check = tk.Checkbutton(duration_frame, text="offcpu", variable=trace_offcpu_var, font=font_large, bg="#f0f0f0")
-trace_offcpu_check.pack(side=tk.LEFT, padx=(0, 10))
+# trace_offcpu_check = tk.Checkbutton(duration_frame, text="offcpu", variable=trace_offcpu_var, font=font_large, bg="#f0f0f0")
+# trace_offcpu_check.pack(side=tk.LEFT, padx=(0, 10))
 
 # Start Capture button
 start_btn = tk.Button(duration_frame, text="Start Capture", font=font_large, bg="#2196F3", fg="white", width=18, height=2, command=start_button_click)
