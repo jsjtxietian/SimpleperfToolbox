@@ -112,8 +112,8 @@ def start_capture():
         
         # Start countdown in a separate thread
         def countdown_progress():
-            for i in range(duration, 0, -1):
-                percent = 100 - int((i / duration) * 100)
+            for i in range(duration + 5, 0, -1):
+                percent = 100 - int((i / (duration + 5)) * 100)
                 log_message(f"Simpleperf Profiling Progress {percent}%")
                 time.sleep(1)
             log_message("Simpleperf Profiling Capture Complete")
