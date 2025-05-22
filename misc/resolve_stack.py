@@ -1,6 +1,23 @@
 import json
 import sys
 import numpy
+import re
+
+# Add director or animation?
+PHASE_PATTERNS = {
+    "FixedUpdate":    re.compile(r"CommonUpdate<FixedBehaviourManager>"),
+    "Physics":        re.compile(r"PhysicsManager"),   
+    "Update":         re.compile(r"CommonUpdate<BehaviourManager>"),              
+    "LateUpdate":     re.compile(r"CommonUpdate<LateBehaviourManager>"),
+    "Render":         re.compile(r"Camera::CustomRender|PlayerRender|Camera::CustomCull"),
+}
+
+def label_sample(frames):
+    for phase, pat in PHASE_PATTERNS.items():
+        if any(pat.search(f) for f in frames):
+            return phase
+    return "Other"
+
 
 def resolve_stack(stack_index, stack_table_data, frame_table_data, string_table, stack_schema, frame_schema):
     """
@@ -88,23 +105,102 @@ for thread in profile.get("threads", []):
             reversed_stack_array  = list(reversed(stack_frames))
         else:
             reversed_stack_array  = "No stack info"
-        
+
+        phase = label_sample(reversed_stack_array)
         thread_samples.append({
             "relative_time": relative_time,
-            "reversed_stack_array": reversed_stack_array
+            "reversed_stack_array": reversed_stack_array,
+            "phase": phase
         })
-       
-        # print(f"  Sample: Time: {relative_time}, Responsiveness: {sample_resp}")
-        # print(f"    Stack: {reversed_stack_array }")
     
     thread_result = {
         "name": thread_name,
         "tid": tid,
-        "sample_size": len(thread_samples),
         "samples": thread_samples
     }
     results.append(thread_result)
 
+runs = []
+
+main_thread = next((t for t in results if t["name"] == "UnityMain"), None)
+samples = main_thread["samples"]
+prev_phase = samples[0]["phase"]
+start_idx  = 0
+for i, s in enumerate(samples[1:], start=1):
+    if s["phase"] != prev_phase:
+        end_idx = i - 1
+        runs.append({
+            "phase": prev_phase,
+            "start_i": start_idx,
+            "end_i": end_idx,
+            "start_t": samples[start_idx]["relative_time"],
+            "end_t":   samples[end_idx]["relative_time"],
+            "stack": samples[start_idx]["reversed_stack_array"]
+        })
+        prev_phase = s["phase"]
+        start_idx  = i
+# append the final run
+runs.append({
+    "phase": prev_phase,
+    "start_i": start_idx,
+    "end_i": len(samples)-1,
+    "start_t": samples[start_idx]["relative_time"],
+    "end_t":   samples[-1]["relative_time"],
+    "stack": samples[-1]["reversed_stack_array"]
+})
+
+MERGE_THRESH = 8  # ms
+merged_runs = []
+merge_logs  = []
+i = 0
+
+while i < len(runs):
+    cur = runs[i]
+
+    # Pattern: Render → one non-Render → Render
+    if (cur["phase"] == "Render"
+        and i+2 < len(runs)
+        and runs[i+1]["phase"] != "Render"
+        and runs[i+2]["phase"] == "Render"):
+
+        first = cur
+        gap_run = runs[i+1]
+        second = runs[i+2]
+
+        gap = second["start_t"] - first["end_t"]
+        if gap < MERGE_THRESH:
+            # Build a single merged Render run
+            merged = {
+                "phase":   "Render",
+                "start_i": first["start_i"],
+                "end_i":   second["end_i"],
+                "start_t": first["start_t"],
+                "end_t":   second["end_t"],
+            }
+            merged_runs.append(merged)
+            merge_logs.append(
+                f"Merged Render at {first['end_t']}->{second['start_t']} "
+                f"(gap {gap} ms, dropped phase {gap_run['phase']} : {gap_run['stack']})"
+            )
+            i += 3
+            continue
+
+    # otherwise, just keep the current run
+    merged_runs.append(cur)
+    i += 1
+
+# Now replace your runs with the merged version:
+runs = merged_runs
+
+# Optional: print out merge logs
+for log in merge_logs:
+    print(log)
+
+for r in runs:
+    print(r)
+
+
+'''
 frame_events = []
 samples = None
 
@@ -192,3 +288,4 @@ while True:
         for frame in smp["reversed_stack_array"]:
             print("   ", frame)
         print()
+'''
