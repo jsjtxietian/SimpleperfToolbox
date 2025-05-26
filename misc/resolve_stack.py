@@ -1,19 +1,57 @@
 import json
 import sys
-import numpy
+import numpy as np
 import re
 
-# Add director or animation?
+# see PlayerLoopCallbacks.h and Real unity profiler
+# add other markers like director or animation, add more pattern   
+
+PHASE_PRIORITY = [
+    "Update",
+    "LateUpdate",
+    "FixedUpdate",   # highest priority
+    "Physics",
+    "Render",        # lowest priority among real phases
+]
+
+RAW_PHASE_PATTERNS = {
+    "FixedUpdate": [
+        r"CommonUpdate<FixedBehaviourManager>",
+    ],
+    "Physics": [
+        r"PhysicsManager",
+    ],
+    "Update": [
+        r"CommonUpdate<BehaviourManager>",
+    ],
+    "LateUpdate": [
+        r"CommonUpdate<LateBehaviourManager>",
+    ],
+    "Render": [
+        "PlayerRender",
+        "RenderSettings",
+        "ForwardShaderRenderLoop",
+        "Camera::",
+        "ShaderLab::",
+        "GfxDeviceClient::",
+        "GfxDevice::",
+        "ImageFilters::",
+        "SkinnedMeshRendererManager::"
+    ],
+}
+
 PHASE_PATTERNS = {
-    "FixedUpdate":    re.compile(r"CommonUpdate<FixedBehaviourManager>"),
-    "Physics":        re.compile(r"PhysicsManager"),   
-    "Update":         re.compile(r"CommonUpdate<BehaviourManager>"),              
-    "LateUpdate":     re.compile(r"CommonUpdate<LateBehaviourManager>"),
-    "Render":         re.compile(r"Camera::CustomRender|PlayerRender|Camera::CustomCull"),
+    phase: re.compile(
+        r"|".join(re.escape(pat) for pat in pats)
+    )
+    for phase, pats in RAW_PHASE_PATTERNS.items()
 }
 
 def label_sample(frames):
-    for phase, pat in PHASE_PATTERNS.items():
+    for phase in PHASE_PRIORITY:
+        pat = PHASE_PATTERNS.get(phase)
+        if not pat:
+            print("CHECK PHASE_PRIORITY AND PHASE_PATTERNS!")
         if any(pat.search(f) for f in frames):
             return phase
     return "Other"
@@ -81,7 +119,6 @@ for thread in profile.get("threads", []):
     # Determine the field positions in each sample entry.
     stack_idx_field = sample_schema.get("stack", 0)
     time_idx_field = sample_schema.get("time", 1)
-    responsiveness_idx_field = sample_schema.get("responsiveness", 2)
     
     # Get stackTable, frameTable, and stringTable data and their schemas
     stack_table = thread.get("stackTable", {}).get("data", [])
@@ -94,9 +131,8 @@ for thread in profile.get("threads", []):
     for sample in sample_data:
         sample_stack_index = sample[stack_idx_field]
         sample_time = sample[time_idx_field]
-        sample_resp = sample[responsiveness_idx_field]
 
-        relative_time = int(sample_time - global_min_time)
+        relative_time = float(f"{sample_time - global_min_time:.2f}")
         
         # Replace the stack number with a human-readable call stack string.
         if sample_stack_index is not None and stack_table:
@@ -149,56 +185,131 @@ runs.append({
     "stack": samples[-1]["reversed_stack_array"]
 })
 
-MERGE_THRESH = 8  # ms
-merged_runs = []
-merge_logs  = []
-i = 0
+# for r in runs:
+#     print(r)
 
-while i < len(runs):
-    cur = runs[i]
+def CleanGap(origin_run, merge_thresh, count):
+    merged_runs = []
+    merge_logs  = []
+    i = 0
 
-    # Pattern: Render → one non-Render → Render
-    if (cur["phase"] == "Render"
-        and i+2 < len(runs)
-        and runs[i+1]["phase"] != "Render"
-        and runs[i+2]["phase"] == "Render"):
+    while i < len(origin_run):
+        cur = origin_run[i]
 
-        first = cur
-        gap_run = runs[i+1]
-        second = runs[i+2]
+        # Pattern: Render => Other => Render
+        if (cur["phase"] == "Render"
+            and i+2 < len(origin_run)
+            and origin_run[i+1]["phase"] == "Other"
+            and origin_run[i+2]["phase"] == "Render"):
 
-        gap = second["start_t"] - first["end_t"]
-        if gap < MERGE_THRESH:
-            # Build a single merged Render run
-            merged = {
-                "phase":   "Render",
-                "start_i": first["start_i"],
-                "end_i":   second["end_i"],
-                "start_t": first["start_t"],
-                "end_t":   second["end_t"],
-            }
-            merged_runs.append(merged)
-            merge_logs.append(
-                f"Merged Render at {first['end_t']}->{second['start_t']} "
-                f"(gap {gap} ms, dropped phase {gap_run['phase']} : {gap_run['stack']})"
-            )
-            i += 3
-            continue
+            first = cur
+            gap_run = origin_run[i+1]
+            second = origin_run[i+2]
 
-    # otherwise, just keep the current run
-    merged_runs.append(cur)
-    i += 1
+            gap = second["start_t"] - first["end_t"]
+            if gap < merge_thresh:
+                # Build a single merged Render run
+                merged = {
+                    "phase":   "Render",
+                    "start_i": first["start_i"],
+                    "end_i":   second["end_i"],
+                    "start_t": first["start_t"],
+                    "end_t":   second["end_t"],
+                }
+                merged_runs.append(merged)
+                merge_logs.append(
+                    f"Merged Other at {first['end_t']}->{second['start_t']} "
+                    f"(gap {gap} ms, dropped phase {gap_run['phase']} : {gap_run['stack']})"
+                )
+                i += 3
+                continue
 
-# Now replace your runs with the merged version:
-runs = merged_runs
+        # otherwise, just keep the current run
+        merged_runs.append(cur)
+        i += 1
+    
+    # Optional: print out merge logs
+    print(f"========= {count} =========")
+    for log in merge_logs:
+        print(log)
+    print(f"========= {count} over =========")
 
-# Optional: print out merge logs
-for log in merge_logs:
-    print(log)
+
+    return merged_runs
+
+# Do twice to compress more 
+# Render => Other => Render => Other
+# TODO, make it more flexible, a third of average frame time?
+runs = CleanGap(runs, 6, 0)
+runs = CleanGap(runs, 6, 1)
 
 for r in runs:
     print(r)
 
+def extract_frame_metrics_with_warnings(runs, min_frame_time = 6):
+    """
+    Returns: (
+      frame_boundaries,  # list of end_t for each detected frame
+      frame_count,       # int
+      frame_times,       # np.ndarray of deltas
+      stats,             # dict with avg_ms, min_ms, max_ms
+      warnings           # list of warning strings
+    )
+    """
+
+    # 1) Walk through runs, using each Render as a frame boundary
+    frame_boundaries = []
+    warnings = []
+    prev_render_idx = None
+
+    for idx, run in enumerate(runs):
+        if run["phase"] != "Render":
+            continue
+
+        # We have a Render boundary at runs[idx]["end_t"]
+        cur_end = run["end_t"]
+
+        if prev_render_idx is not None:
+            # Collect all runs between the two Renders
+            in_frame = runs[prev_render_idx+1 : idx]
+
+            has_update = any(r["phase"] == "Update" for r in in_frame)
+            has_late   = any(r["phase"] == "LateUpdate"  for r in in_frame)
+
+            if not has_update and not has_late:
+                warnings.append(
+                    f"Frame ending at {cur_end} ms missing: Update or LateUpdate"
+                )
+            
+            if len(frame_boundaries) > 2 and cur_end - frame_boundaries[-1] < min_frame_time:
+                print(f"run is too small {cur_end - frame_boundaries[-1]}: before {len(runs[prev_render_idx+1 : idx + 1])}: {runs[prev_render_idx+1 : idx + 1]}")
+
+        # TODO: use the end of Render to determine? or the start time of next frame
+        frame_boundaries.append(cur_end)
+        prev_render_idx = idx
+
+    # 2) Compute metrics
+    frame_count = len(frame_boundaries)
+    frame_times = np.diff(frame_boundaries) if frame_count > 1 else np.array([])
+    stats = {}
+    if frame_times.size > 0:
+        stats = {
+            "avg_ms": np.mean(frame_times),
+            "min_ms": np.min(frame_times),
+            "max_ms": np.max(frame_times),
+        }
+
+    return frame_boundaries, frame_count, frame_times, stats, warnings
+
+# ——— USAGE ———
+# after you've built (and maybe merged) `runs`:
+boundaries, count, times, stats, warns = extract_frame_metrics_with_warnings(runs)
+print(f"Detected frames: {count}")
+if times.size > 0:
+    print(f"Avg frame time: {stats['avg_ms']:.2f} ms  (min {stats['min_ms']:.2f}, max {stats['max_ms']:.2f})")
+
+for w in warns:
+    print(w)
 
 '''
 frame_events = []
@@ -218,7 +329,7 @@ if True:
         stack = s["reversed_stack_array"] or []
         
         if any(marker in f for marker in markers for f in stack):
-            # we’re inside a marker run; remember this rt as the latest
+            # we're inside a marker run; remember this rt as the latest
             in_marker_run = True
             last_marker_rt = rt
         else:
