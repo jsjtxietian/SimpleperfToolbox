@@ -2,10 +2,12 @@ import json
 import sys
 import numpy as np
 import re
+import matplotlib.pyplot as plt
+import tkinter as tk
+from tkinter.scrolledtext import ScrolledText
 
 # see PlayerLoopCallbacks.h and Real unity profiler
-# add other markers like director or animation, add more pattern   
-
+# TODO: Consider add other markers like director or animation, add more pattern   
 PHASE_PRIORITY = [
     "Update",
     "LateUpdate",
@@ -86,7 +88,13 @@ def resolve_stack(stack_index, stack_table_data, frame_table_data, string_table,
     frame_record = frame_table_data[frame_idx]
     location_idx = frame_record[ frame_schema.get("location", 0) ]
     frame_str = string_table[location_idx] if 0 <= location_idx < len(string_table) else "<unknown>"
-    frames.append(frame_str)
+    
+    # keep the stack short
+    match = re.match(r'^([^\(]+)\(', frame_str)
+    if match:
+        frames.append(match.group(1).strip())
+    else :
+        frames.append(frame_str)
     
     return frames
 
@@ -171,7 +179,7 @@ for i, s in enumerate(samples[1:], start=1):
             "end_i": end_idx,
             "start_t": samples[start_idx]["relative_time"],
             "end_t":   samples[end_idx]["relative_time"],
-            "stack": samples[start_idx]["reversed_stack_array"]
+            "stacks": [s["reversed_stack_array"] for s in samples[start_idx:end_idx+1]]
         })
         prev_phase = s["phase"]
         start_idx  = i
@@ -182,7 +190,7 @@ runs.append({
     "end_i": len(samples)-1,
     "start_t": samples[start_idx]["relative_time"],
     "end_t":   samples[-1]["relative_time"],
-    "stack": samples[-1]["reversed_stack_array"]
+    "stacks": [s["reversed_stack_array"] for s in samples[start_idx:]]
 })
 
 # for r in runs:
@@ -215,11 +223,12 @@ def CleanGap(origin_run, merge_thresh, count):
                     "end_i":   second["end_i"],
                     "start_t": first["start_t"],
                     "end_t":   second["end_t"],
+                    "stacks": first["stacks"] + gap_run["stacks"] + second["stacks"],
                 }
                 merged_runs.append(merged)
                 merge_logs.append(
                     f"Merged Other at {first['end_t']}->{second['start_t']} "
-                    f"(gap {gap} ms, dropped phase {gap_run['phase']} : {gap_run['stack']})"
+                    f"(gap {gap} ms, dropped phase {gap_run['phase']} : {gap_run['stacks']})"
                 )
                 i += 3
                 continue
@@ -233,7 +242,6 @@ def CleanGap(origin_run, merge_thresh, count):
     for log in merge_logs:
         print(log)
     print(f"========= {count} over =========")
-
 
     return merged_runs
 
@@ -258,7 +266,9 @@ def extract_frame_metrics_with_warnings(runs, min_frame_time = 6):
     """
 
     # 1) Walk through runs, using each Render as a frame boundary
+    # TODO: Consider the situation that Render is not sampled
     frame_boundaries = []
+    frame_runs = []
     warnings = []
     prev_render_idx = None
 
@@ -272,7 +282,10 @@ def extract_frame_metrics_with_warnings(runs, min_frame_time = 6):
         if prev_render_idx is not None:
             # Collect all runs between the two Renders
             in_frame = runs[prev_render_idx+1 : idx]
+            frame_runs.append(runs[prev_render_idx+1 : idx+1])
 
+            # TODO: Check this more carefully
+            # # Things like LateUpdate should be after Update, there should be no Update after LateUpdate
             has_update = any(r["phase"] == "Update" for r in in_frame)
             has_late   = any(r["phase"] == "LateUpdate"  for r in in_frame)
 
@@ -291,25 +304,84 @@ def extract_frame_metrics_with_warnings(runs, min_frame_time = 6):
     # 2) Compute metrics
     frame_count = len(frame_boundaries)
     frame_times = np.diff(frame_boundaries) if frame_count > 1 else np.array([])
-    stats = {}
-    if frame_times.size > 0:
-        stats = {
-            "avg_ms": np.mean(frame_times),
-            "min_ms": np.min(frame_times),
-            "max_ms": np.max(frame_times),
-        }
-
-    return frame_boundaries, frame_count, frame_times, stats, warnings
+    
+    return frame_runs, frame_times, warnings
 
 # ——— USAGE ———
 # after you've built (and maybe merged) `runs`:
-boundaries, count, times, stats, warns = extract_frame_metrics_with_warnings(runs)
-print(f"Detected frames: {count}")
-if times.size > 0:
+frame_runs, frame_times, warns = extract_frame_metrics_with_warnings(runs)
+stats = {}
+if frame_times.size > 0:
+    stats = {
+        "avg_ms": np.mean(frame_times),
+        "min_ms": np.min(frame_times),
+        "max_ms": np.max(frame_times),
+    }
+print(f"Detected frames: {len(frame_times)}")
+if frame_times.size > 0:
     print(f"Avg frame time: {stats['avg_ms']:.2f} ms  (min {stats['min_ms']:.2f}, max {stats['max_ms']:.2f})")
 
 for w in warns:
     print(w)
+
+
+x = np.arange(1, len(frame_times) + 1)
+
+fig, ax = plt.subplots()
+line, = ax.plot(x, frame_times, marker='o', linestyle='-')
+ax.set_xlabel('Frame #')
+ax.set_ylabel('Frame Time (ms)')
+ax.set_title('Frame Time per Frame')
+ax.grid(True)
+line.set_picker(5)
+
+annot = ax.annotate(
+    "",                            # no text yet
+    xy=(0,0),                      # will be updated when clicked
+    xytext=(15,15),                # offset the text
+    textcoords="offset points",
+    bbox=dict(boxstyle="round", fc="w"),
+    arrowprops=dict(arrowstyle="->")
+)
+annot.set_visible(False)
+runs_text = fig.text(0.1, -0.15, "", wrap=True, fontsize=10, ha='left', va='top', transform=ax.transAxes)
+
+def show_runs_in_popup(runs):
+    # Create a new Tkinter window
+    root = tk.Tk()
+    root.title("Runs Info")
+    # Set window size
+    root.geometry("800x400")
+    # Add a scrollable text widget
+    text = ScrolledText(root, wrap=tk.WORD, font=("Consolas", 10))
+    text.pack(expand=True, fill='both')
+    # Insert the runs info
+    for i, r in enumerate(runs):
+        text.insert(tk.END, f"Run {i}: {r['phase']}")
+        text.insert(tk.END, f"  Time: {(r['end_t'] - r['start_t'] + 1):.2f} ms")
+        text.insert(tk.END, f"  Stack:\n")
+        for frame in r['stacks']:
+            text.insert(tk.END, f"    {frame}\n")
+        text.insert(tk.END, "\n")
+    text.config(state=tk.DISABLED)
+    root.mainloop()
+
+def on_pick(event):
+    # event.ind is a list of point indices that were clicked
+    ind = event.ind[0]
+    xdata, ydata = line.get_data()
+    x0, y0 = xdata[ind], ydata[ind]
+    annot.xy = (x0, y0)
+    annot.set_text(f"Frame {int(x0)}: {y0:.2f} ms")
+    annot.set_visible(True)
+    show_runs_in_popup(frame_runs[ind])
+    fig.canvas.draw()
+
+# 5) Connect the callback and show
+fig.canvas.mpl_connect('pick_event', on_pick)
+plt.subplots_adjust(bottom=0.3)  # Make space for the text box
+plt.show()
+
 
 '''
 frame_events = []
