@@ -9,13 +9,15 @@ from tkinter.scrolledtext import ScrolledText
 # see PlayerLoopCallbacks.h and Real unity profiler
 # TODO: Consider add other markers like director or animation, add more pattern   
 PHASE_PRIORITY = [
+    "FixedUpdate",   # highest priority
     "Update",
     "LateUpdate",
-    "FixedUpdate",   # highest priority
     "Physics",
     "Render",        # lowest priority among real phases
 ]
 
+# TODO: Find a more robust way of label phases
+# Also note that the phase order is not reliable too, physics may come from Update
 RAW_PHASE_PATTERNS = {
     "FixedUpdate": [
         r"CommonUpdate<FixedBehaviourManager>",
@@ -29,16 +31,16 @@ RAW_PHASE_PATTERNS = {
     "LateUpdate": [
         r"CommonUpdate<LateBehaviourManager>",
     ],
-    "Render": [
+    "Render": [   # no render because nativeRender
         "PlayerRender",
         "RenderSettings",
         "ForwardShaderRenderLoop",
         "Camera::",
         "ShaderLab::",
-        "GfxDeviceClient::",
-        "GfxDevice::",
         "ImageFilters::",
-        "SkinnedMeshRendererManager::"
+        "RenderManager::",
+        "SkinnedMeshRendererManager::",
+        "RendererScene::"
     ],
 }
 
@@ -255,55 +257,88 @@ for r in runs:
     print(r)
 
 def extract_frame_metrics_with_warnings(runs, min_frame_time = 6):
-    """
-    Returns: (
-      frame_boundaries,  # list of end_t for each detected frame
-      frame_count,       # int
-      frame_times,       # np.ndarray of deltas
-      stats,             # dict with avg_ms, min_ms, max_ms
-      warnings           # list of warning strings
-    )
-    """
-
-    # 1) Walk through runs, using each Render as a frame boundary
-    # TODO: Consider the situation that Render is not sampled
+    # Define phase order (lower number = earlier in frame)
+    phase_order = {
+        "FixedUpdate": 0,
+        "Update": 2,
+        "LateUpdate": 3,
+        "Render": 5,
+    }
+    
     frame_boundaries = []
     frame_runs = []
     warnings = []
-    prev_render_idx = None
-
+    current_frame_start_idx = 0
+    last_phase_order = -1
+    last_was_render = False
+    
     for idx, run in enumerate(runs):
-        if run["phase"] != "Render":
+        phase = run["phase"]
+        
+        # Skip "Other" and "Physics" phases for sequence detection
+        if phase == "Other" or phase == "Physics":
+            # If last phase was Render, even "Other" or "Physics" starts a new frame
+            if last_was_render and idx > current_frame_start_idx:
+                frame_runs.append(runs[current_frame_start_idx:idx])
+                frame_boundaries.append(run["start_t"])
+                current_frame_start_idx = idx
+                last_phase_order = -1
+                last_was_render = False
             continue
 
-        # We have a Render boundary at runs[idx]["end_t"]
-        cur_end = run["end_t"]
-
-        if prev_render_idx is not None:
-            # Collect all runs between the two Renders
-            in_frame = runs[prev_render_idx+1 : idx]
-            frame_runs.append(runs[prev_render_idx+1 : idx+1])
-
-            # TODO: Check this more carefully
-            # # Things like LateUpdate should be after Update, there should be no Update after LateUpdate
-            has_update = any(r["phase"] == "Update" for r in in_frame)
-            has_late   = any(r["phase"] == "LateUpdate"  for r in in_frame)
-
-            if not has_update and not has_late:
-                warnings.append(
-                    f"Frame ending at {cur_end} ms missing: Update or LateUpdate"
-                )
-            
-            if len(frame_boundaries) > 2 and cur_end - frame_boundaries[-1] < min_frame_time:
-                print(f"run is too small {cur_end - frame_boundaries[-1]}: before {len(runs[prev_render_idx+1 : idx + 1])}: {runs[prev_render_idx+1 : idx + 1]}")
-
-        # TODO: use the end of Render to determine? or the start time of next frame
-        frame_boundaries.append(cur_end)
-        prev_render_idx = idx
-
-    # 2) Compute metrics
-    frame_count = len(frame_boundaries)
-    frame_times = np.diff(frame_boundaries) if frame_count > 1 else np.array([])
+        phase_num = phase_order.get(phase, 6)
+        
+        # Check if this phase indicates a new frame
+        # New frame if: 
+        # 1. We see a phase that should come before the last non-Other phase
+        # 2. OR the last phase was Render (Render ends a frame)
+        if phase_num < last_phase_order or last_was_render:
+            # This is the start of a new frame
+            if idx > current_frame_start_idx:
+                # Store the previous frame
+                frame_runs.append(runs[current_frame_start_idx:idx])
+                # Use the start of the new frame as boundary
+                frame_boundaries.append(run["start_t"])
+            current_frame_start_idx = idx
+            last_phase_order = phase_num
+            last_was_render = False
+        else:
+            # Continue in current frame
+            last_phase_order = phase_num
+        
+        # Track if this was a Render phase
+        last_was_render = (phase == "Render")
+    
+    # Don't forget the last frame
+    if current_frame_start_idx < len(runs):
+        frame_runs.append(runs[current_frame_start_idx:])
+    
+    # Now we need to ensure we have proper boundaries
+    # frame_boundaries currently contains the start times of frames 1, 2, ..., N-1
+    # We need to add the start of frame 0 and the end of the last frame
+    
+    if len(frame_runs) > 0:
+        # Insert the start time of the first frame at the beginning
+        frame_boundaries.insert(0, frame_runs[0][0]["start_t"])
+        # Add the end time of the last frame at the end
+        frame_boundaries.append(frame_runs[-1][-1]["end_t"])
+    
+    # Drop first and last frames as they are often partial
+    if len(frame_runs) > 2:
+        # Drop first and last frames
+        frame_runs = frame_runs[1:-1]
+        # For boundaries, we need to keep N+1 boundaries for N frames
+        # So we drop the first boundary and the last boundary
+        frame_boundaries = frame_boundaries[1:-1]
+        print(f"Dropped first and last frames (often partial). Analyzing {len(frame_runs)} complete frames.")
+    
+    # Calculate frame times from boundaries
+    # frame_times[i] = frame_boundaries[i+1] - frame_boundaries[i] = duration of frame_runs[i]
+    frame_times = np.diff(frame_boundaries) if len(frame_boundaries) > 1 else np.array([])
+    
+    # Verify alignment
+    if len(frame_times) != len(frame_runs):
+        warnings.append(f"Index mismatch: {len(frame_runs)} frames but {len(frame_times)} frame times!")
     
     return frame_runs, frame_times, warnings
 
@@ -317,13 +352,12 @@ if frame_times.size > 0:
         "min_ms": np.min(frame_times),
         "max_ms": np.max(frame_times),
     }
-print(f"Detected frames: {len(frame_times)}")
+print(f"Detected frames: {len(frame_runs)}")
 if frame_times.size > 0:
     print(f"Avg frame time: {stats['avg_ms']:.2f} ms  (min {stats['min_ms']:.2f}, max {stats['max_ms']:.2f})")
 
 for w in warns:
     print(w)
-
 
 x = np.arange(1, len(frame_times) + 1)
 
@@ -346,129 +380,57 @@ annot = ax.annotate(
 annot.set_visible(False)
 runs_text = fig.text(0.1, -0.15, "", wrap=True, fontsize=10, ha='left', va='top', transform=ax.transAxes)
 
-def show_runs_in_popup(runs):
-    # Create a new Tkinter window
+def show_runs_in_popup(ind):
+    runs = frame_runs[ind]
+    frame_time = frame_times[ind]
     root = tk.Tk()
-    root.title("Runs Info")
-    # Set window size
-    root.geometry("800x400")
-    # Add a scrollable text widget
+    root.title("Frame Details")
+    root.geometry("800x600")
     text = ScrolledText(root, wrap=tk.WORD, font=("Consolas", 10))
     text.pack(expand=True, fill='both')
-    # Insert the runs info
+    
+    frame_start = runs[0]["start_t"]
+    frame_end = runs[-1]["end_t"]
+    frame_duration = frame_end - frame_start
+    
+    # TODO: the self time and real time diff can be huge, consider when main thread is 
+    # waitforpresent while gfxthread is compiling shader
+    text.insert(tk.END, f"Self time: {frame_duration:.2f} ms, real time {frame_time:.2f} ms \n")
+    text.insert(tk.END, f"Frame Start: {frame_start:.2f} ms, End: {frame_end:.2f} ms\n")
+    text.insert(tk.END, "-" * 10 + "\n\n")
+    
     for i, r in enumerate(runs):
-        text.insert(tk.END, f"Run {i}: {r['phase']}")
-        text.insert(tk.END, f"  Time: {(r['end_t'] - r['start_t'] + 1):.2f} ms")
-        text.insert(tk.END, f"  Stack:\n")
-        for frame in r['stacks']:
-            text.insert(tk.END, f"    {frame}\n")
+        phase_duration = r['end_t'] - r['start_t'] + 1
+        text.insert(tk.END, f"Phase {i+1}: {r['phase']}\t")
+        text.insert(tk.END, f"  Duration: {phase_duration:.2f} ms ({r['start_t']:.2f} - {r['end_t']:.2f})\t")
+        text.insert(tk.END, f"  Samples: {len(r['stacks'])}\n")
+        
+        if r['stacks'] and len(r['stacks']) > 0:
+            shown_stacks = set()
+            for stack in r['stacks']:
+                if stack and len(stack) > 0:
+                    # Show top 5 frames of the stack
+                    stack_preview = " -> ".join(stack[:5])
+                    if len(stack) > 5:
+                        stack_preview += f" ... (+{len(stack)-5} more)"
+                    
+                    text.insert(tk.END, f"    {stack_preview}\n")
+        
         text.insert(tk.END, "\n")
+    
     text.config(state=tk.DISABLED)
     root.mainloop()
 
 def on_pick(event):
-    # event.ind is a list of point indices that were clicked
     ind = event.ind[0]
     xdata, ydata = line.get_data()
     x0, y0 = xdata[ind], ydata[ind]
     annot.xy = (x0, y0)
     annot.set_text(f"Frame {int(x0)}: {y0:.2f} ms")
     annot.set_visible(True)
-    show_runs_in_popup(frame_runs[ind])
+    show_runs_in_popup(ind)
     fig.canvas.draw()
 
-# 5) Connect the callback and show
 fig.canvas.mpl_connect('pick_event', on_pick)
 plt.subplots_adjust(bottom=0.3)  # Make space for the text box
 plt.show()
-
-
-'''
-frame_events = []
-samples = None
-
-if True:
-    # broken stack
-    markers = ["PlayerRender", "Camera::CustomRender"]
-    main_thread = next((t for t in results if t["name"] == "UnityMain"), None)
-    samples = main_thread["samples"]
-
-    in_marker_run = False
-    last_marker_rt = None
-
-    for s in samples:
-        rt = s["relative_time"]
-        stack = s["reversed_stack_array"] or []
-        
-        if any(marker in f for marker in markers for f in stack):
-            # we're inside a marker run; remember this rt as the latest
-            in_marker_run = True
-            last_marker_rt = rt
-        else:
-            # run ended → emit the last marker time
-            if in_marker_run:
-                frame_events.append(last_marker_rt)
-                in_marker_run = False
-                last_marker_rt = None
-
-    # if the last sample was in a marker run, emit its last rt too
-    if in_marker_run and last_marker_rt is not None:
-        frame_events.append(last_marker_rt)
-else:
-    marker = "eglSwapBuffers"
-    gfx_thread = next((t for t in results if t["name"] == "UnityGfxDeviceW"), None)
-    samples = gfx_thread["samples"]
-    
-    in_frame = False
-    for s in samples:
-        rt = s["relative_time"]
-        stack = s["reversed_stack_array"] or []
-        # marker hits => new frame boundary
-        if any(marker in f for f in stack):
-            if not in_frame:
-                frame_events.append(rt)
-                in_frame = True
-        else:
-            in_frame = False
-
-num_frames = len(frame_events)
-frame_times = [frame_events[i] - frame_events[i-1] for i in range(1, num_frames)]
-
-print(num_frames)
-print(numpy.average(frame_times))
-
-threshold_ms = 4
-short_intervals = []
-
-for prev, curr in zip(frame_events, frame_events[1:]):
-    delta = curr - prev
-    if delta < threshold_ms:
-        short_intervals.append((prev, curr, delta))
-
-if not short_intervals:
-    print("No intervals under", threshold_ms, "ms")
-else:
-    print(f"{len(short_intervals)} Intervals under {threshold_ms} ms:")
-    for start, end, delta in short_intervals:
-        print(f"  {delta} ms between {start} ms → {end} ms")
-
-while True:
-    user = input("relative_time> ").strip()
-    if user.lower() in ("q","quit","exit",""):
-        break
-    try:
-        t = int(user)
-    except ValueError:
-        print("  ↳ please enter an integer or 'q'")
-        continue
-
-    # find a sample at exactly that relative_time
-    smp = next((s for s in samples if s["relative_time"] == t), None)
-    if not smp:
-        print(f"  ↳ no sample at {t} ms")
-    else:
-        print(f"\nCall stack at {t} ms:")
-        for frame in smp["reversed_stack_array"]:
-            print("   ", frame)
-        print()
-'''
